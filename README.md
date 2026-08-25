@@ -55,6 +55,38 @@ bypasses. Invalid or unreadable policy fails closed as
 `project-config.invalid`. Only the nearest file is used; policies do not merge
 or inherit.
 
+## Gas City approvals
+
+One-shot approval for a blocked destructive command belongs in Gas City, not in
+`dcg`. The guard remains a static classifier and must not grow reusable bypass
+environment variables, persistent allowlists, profiles, plugins, or general
+policy inheritance.
+
+The Gas City primitive should expose this operator flow:
+
+```console
+$ gc approval request --rig <rig> --session <session-id> --cwd <path> --ttl 5m --reason <text> -- <argv...>
+$ gc approval approve <request-id> --ttl 5m --reason <text>
+$ gc approval exec <permit-id> -- <argv...>
+$ gc approval show <request-or-permit-id> --json
+$ gc approval revoke <permit-id>
+```
+
+Gas City, not `dcg`, owns request storage, human approval authority, permit
+creation, revocation, and audit. A permit must bind to the exact canonical argv
+bytes and SHA-256, rig identity, requester/session, working directory when
+relevant, and a short expiry. `gc approval exec` must recompute the argv hash
+and verify the permit id, rig, requester/session, cwd, expiry, and unused state.
+It must then durably write the consume audit and atomically mark the permit
+consumed before it execs the exact argv. Stale, mismatched, replayed,
+already-consumed, malformed, or wrong-rig/session permits must fail closed.
+
+DCG-side behavior is intentionally limited: the approved wrapper command is
+ordinary shell input to the classifier. DCG must not inspect the wrapped argv as
+a reason to add a broad bypass, and it must continue to deny the destructive
+command when it is invoked directly or with a reusable-looking environment
+variable.
+
 ## Retained rules
 
 - destructive Git reset, clean, checkout, restore, branch deletion, stash,

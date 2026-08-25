@@ -790,6 +790,15 @@ mod tests {
     }
 
     #[test]
+    fn gas_city_approval_wrapper_is_not_a_reusable_bypass() {
+        allowed("gc approval exec permit-123 -- rm -rf src");
+        allowed("gc approval show permit-123 --json");
+        denied("DCG_APPROVAL_TOKEN=permit-123 rm -rf src");
+        denied("DCG_ALLOW_DESTRUCTIVE=1 git reset --hard");
+        denied("rm -rf src");
+    }
+
+    #[test]
     fn project_rules_support_one_explicit_match_shape() {
         let rules = parse_project_rules(
             r#"
@@ -833,6 +842,7 @@ mod tests {
             "[[deny]]\nid = \"Bad ID\"\nexact = \"a\"\nreason = \"invalid id\"",
             "[[deny]]\nid = \"x\"\nexact = \"a\"\nreason = \"first\"\n[[deny]]\nid = \"x\"\nexact = \"b\"\nreason = \"duplicate\"",
             "unknown = true",
+            "[[allow]]\nexact = \"rm -rf src\"\nreason = \"not supported\"",
         ] {
             assert!(
                 parse_project_rules(policy).is_err(),

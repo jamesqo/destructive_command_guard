@@ -12,6 +12,14 @@ concurrency:
   group: deploy-dcg-main
   cancel-in-progress: false
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  SCCACHE_GHA_VERSION: dcg-v1
+  SCCACHE_BASEDIRS: ${{ github.workspace }}
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-24.04
@@ -33,8 +41,30 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/deploy.yml') }}
+          key: dcg-${{ runner.os }}-cargo-sources-${{ hashFiles('Cargo.lock') }}
+
+      - name: Configure compiler cache
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.16.0
+
+      - name: Restore macOS SDK cache
+        id: macos-sdk-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/MacOSX26.1.sdk.tar.xz
+          key: dcg-macos-sdk-26.1-beee7212d265a6d2
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+
+      - name: Install cargo-zigbuild
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2.85.10
+        with:
+          tool: cargo-zigbuild@0.23.0
+          fallback: none
 
       - name: Test
         run: |
@@ -75,34 +105,56 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
           printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
 
+      - name: Acquire macOS SDK
+        if: steps.macos-sdk-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_archive="$RUNNER_TEMP/MacOSX26.1.sdk.tar.xz"
+          curl --fail --location --retry 3 \
+            --output "$sdk_archive" \
+            https://github.com/joseluisq/macosx-sdks/releases/download/26.1/MacOSX26.1.sdk.tar.xz
+          printf '%s  %s\n' \
+            beee7212d265a6d2867d0236cc069314b38d5fb3486a6515734e76fa210c784c \
+            "$sdk_archive" \
+            | sha256sum --check --strict
+
+      - name: Save macOS SDK cache
+        if: steps.macos-sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ runner.temp }}/MacOSX26.1.sdk.tar.xz
+          key: dcg-macos-sdk-26.1-beee7212d265a6d2
+
       - name: Cross-compile Apple Silicon binary
         shell: bash
         run: |
           set -euo pipefail
-          # cargo-zigbuild's official image includes Rust, Zig, and the macOS
-          # SDK needed to link a Darwin binary from the Linux runner. Pin both
-          # its release tag and multi-platform manifest digest.
-          docker run --rm \
-            --volume "$PWD:/io" \
-            --volume "$HOME/.cargo/registry:/usr/local/cargo/registry" \
-            --volume "$HOME/.cargo/git:/usr/local/cargo/git" \
-            --volume "$HOME/.rustup:/usr/local/rustup" \
-            --workdir /io \
-            ghcr.io/rust-cross/cargo-zigbuild:0.23.0@sha256:b8364c2c60cdcc9b95c402d17654bff517410926a35678bd89dd924b8158d6ae \
+          sdk_root="$RUNNER_TEMP/MacOSX26.1.sdk"
+          mkdir -p "$sdk_root"
+          tar -xJf "$RUNNER_TEMP/MacOSX26.1.sdk.tar.xz" \
+            --strip-components=1 \
+            -C "$sdk_root"
+
+          SDKROOT="$sdk_root" \
+          MACOSX_DEPLOYMENT_TARGET=13.4 \
+          CARGO_TARGET_DIR="$PWD/target-macos" \
             cargo zigbuild --locked --release --target aarch64-apple-darwin
-          cp target/aarch64-apple-darwin/release/dcg dist/darwin-arm64/dcg
+          cp target-macos/aarch64-apple-darwin/release/dcg dist/darwin-arm64/dcg
           file dist/darwin-arm64/dcg | tee /dev/stderr | grep -q 'arm64'
           sha256sum dist/linux-amd64/dcg dist/darwin-arm64/dcg
 
+      - name: Show compiler cache statistics
+        run: sccache --show-stats
+
       - name: Save Cargo cache
-        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/deploy.yml') }}
+          key: dcg-${{ runner.os }}-cargo-sources-${{ hashFiles('Cargo.lock') }}
 
       - name: Deploy over Tailscale
         shell: bash

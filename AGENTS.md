@@ -10,26 +10,6 @@ If I tell you to do something, even if it goes against what follows below, YOU M
 
 ---
 
-## RULE NUMBER 1: NO FILE DELETION
-
-**YOU ARE NEVER ALLOWED TO DELETE A FILE WITHOUT EXPRESS PERMISSION.** Even a new file that you yourself created, such as a test code file. You have a horrible track record of deleting critically important files or otherwise throwing away tons of expensive work. As a result, you have permanently lost any and all rights to determine that a file or folder should be deleted.
-
-**YOU MUST ALWAYS ASK AND RECEIVE CLEAR, WRITTEN PERMISSION BEFORE EVER DELETING A FILE OR FOLDER OF ANY KIND.**
-
----
-
-## Irreversible Git & Filesystem Actions — DO NOT EVER BREAK GLASS
-
-> **Note:** This project exists specifically to block these dangerous commands for AI agents. Practice what we preach.
-
-1. **Absolutely forbidden commands:** `git reset --hard`, `git clean -fd`, `rm -rf`, or any command that can delete or overwrite code/data must never be run unless the user explicitly provides the exact command and states, in the same message, that they understand and want the irreversible consequences.
-2. **No guessing:** If there is any uncertainty about what a command might delete or overwrite, stop immediately and ask the user for specific approval. "I think it's safe" is never acceptable.
-3. **Safer alternatives first:** When cleanup or rollbacks are needed, request permission to use non-destructive options (`git status`, `git diff`, `git stash`, copying to backups) before ever considering a destructive command.
-4. **Mandatory explicit plan:** Even after explicit user authorization, restate the command verbatim, list exactly what will be affected, and wait for a confirmation that your understanding is correct. Only then may you execute it—if anything remains ambiguous, refuse and escalate.
-5. **Document the confirmation:** When running any approved destructive command, record (in the session notes / final response) the exact user text that authorized it, the command actually run, and the execution time. If that record is absent, the operation did not happen.
-
----
-
 ## Git Branch: ONLY Use `main`, NEVER `master`
 
 **The default branch is `main`. The `master` branch exists only for legacy URL compatibility.**
@@ -1373,11 +1353,7 @@ and public verification as separately inspectable stages.
    authenticate the publisher. Manual releases require the DSR minisign trust
    path and the pinned local-release cosign trust path. Workflow releases use
    GitHub Actions OIDC for Sigstore.
-4. **No destructive synchronization or cleanup.** Assume an automatic source
-   mirror may delete files until its dry-run proves otherwise. Never bypass dcg
-   to clean a checkout, output directory, key copy, or failed release. Rule 1
-   still applies to temporary files and directories.
-5. **A partial matrix must be deliberate.** A working Windows artifact does not
+4. **A partial matrix must be deliberate.** A working Windows artifact does not
    prove that every advertised target exists. Define the expected target/asset
    matrix before building and either satisfy it or explicitly treat the release
    as an emergency partial release with tested source-install fallback.
@@ -1460,9 +1436,8 @@ The installer asset name, DSR `artifact_naming`, target triple, archive format,
 and release upload name must agree. A naming mismatch can silently trigger a
 source build instead of installing the native artifact.
 
-Treat DSR's automatic remote source sync as deletion-capable. Under this
-repository's no-deletion rule, do not sync into an existing checkout. For a
-native build:
+Use a fresh checkout for native builds so automatic remote source sync cannot
+disturb an active working tree:
 
 1. Create a brand-new checkout path on the Windows host at the exact tag.
 2. Verify that checkout's `HEAD` equals `TAG_SHA` and that its worktree is
@@ -1487,11 +1462,10 @@ native build:
 6. Restore the previous DSR host mapping immediately after collection, even
    when the build or artifact collection fails.
 
-Do not remove the staged checkout or output directory without the user's
-written permission. Record the native host, target triple, commit SHA, Rust
-toolchain, build duration, and collected executable SHA256 in the release
-notes/manifest. Monitor a long native build instead of starting a competing
-build because it appears quiet.
+Record the native host, target triple, commit SHA, Rust toolchain, build
+duration, and collected executable SHA256 in the release notes/manifest.
+Monitor a long native build instead of starting a competing build because it
+appears quiet.
 
 ### 3. Package the Native Artifact Correctly
 
@@ -1532,8 +1506,8 @@ Use DSR's configured private keys directly from its protected secret location.
 Private keys and password material must remain mode `600` and must never be
 copied into the repository, release directory, generic temporary directory, or
 remote build checkout. Publish only public keys and their fingerprints. If
-duplicate secret material is discovered, stop and follow Rule 1; do not set
-`DCG_BYPASS` or otherwise evade a blocked cleanup command.
+duplicate secret material is discovered, stop and correct it without copying
+the secret into another unsafe location.
 
 Before publication, confirm that:
 

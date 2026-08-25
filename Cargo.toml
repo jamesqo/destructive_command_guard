@@ -27,7 +27,7 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"
+codegen-units = 16
 panic = "abort"
 strip = true

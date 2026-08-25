@@ -34,7 +34,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/deploy.yml') }}
 
       - name: Test
         run: |
@@ -102,7 +102,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.github/workflows/deploy.yml') }}
 
       - name: Deploy over Tailscale
         shell: bash

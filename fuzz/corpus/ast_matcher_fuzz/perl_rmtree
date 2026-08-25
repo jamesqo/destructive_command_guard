@@ -1,3 +1,0 @@
-l
-use File::Path qw(rmtree);
-rmtree('/tmp/dcg-fuzz');

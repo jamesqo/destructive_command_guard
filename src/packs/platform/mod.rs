@@ -1,5 +1,0 @@
-pub mod github;
-pub mod gitlab;
-pub mod kamal;
-pub mod modal;
-pub mod railway;

@@ -1,3 +1,0 @@
-hb
-rm -rf /tmp/dcg-fuzz
-git reset --hard HEAD

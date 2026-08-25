@@ -86,3 +86,8 @@ e2e_*.log
 # NTM agent coordination runtime state (human inbox spool, per-pane rate
 # limits, robot snapshot summaries) — regenerated every orchestrator tick.
 .ntm/
+
+# Gas City manages the local issue database. Only its stable rig identity is
+# versioned; runtime state stays local to the city.
+.beads/*
+!.beads/identity.toml

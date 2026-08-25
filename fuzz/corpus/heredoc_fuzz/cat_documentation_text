@@ -1,4 +1,0 @@
-cb
-Documentation example only:
-rm -rf /tmp/example
-git reset --hard HEAD

@@ -1,3 +1,0 @@
-j
-const fs = require('fs');
-fs.rmSync('/tmp/dcg-fuzz', { recursive: true, force: true });

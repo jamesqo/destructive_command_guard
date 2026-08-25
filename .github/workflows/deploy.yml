@@ -24,7 +24,16 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-          targets: x86_64-unknown-linux-musl
+          targets: x86_64-unknown-linux-musl,aarch64-apple-darwin
+
+      - name: Restore Cargo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Test
         run: |
@@ -74,6 +83,9 @@ jobs:
           # its release tag and multi-platform manifest digest.
           docker run --rm \
             --volume "$PWD:/io" \
+            --volume "$HOME/.cargo/registry:/usr/local/cargo/registry" \
+            --volume "$HOME/.cargo/git:/usr/local/cargo/git" \
+            --volume "$HOME/.rustup:/usr/local/rustup" \
             --workdir /io \
             ghcr.io/rust-cross/cargo-zigbuild:0.23.0@sha256:b8364c2c60cdcc9b95c402d17654bff517410926a35678bd89dd924b8158d6ae \
             cargo zigbuild --locked --release --target aarch64-apple-darwin

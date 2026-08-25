@@ -135,4 +135,33 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn supported_input_shapes_extract_commands() {
+        for input in [
+            r#"{"toolName":"Bash","toolInput":{"command":"rm -rf src"}}"#,
+            r#"{"tool_name":"Bash","tool_args":{"command":"git reset --hard"}}"#,
+            r#"{"tool_name":"Bash","toolArgs":"{\"command\":\"find . -delete\"}"}"#,
+            r#"{"tool_name":"Bash","tool_input":{"command":["git","clean","-fd"]}}"#,
+            r#"{"command":"truncate -s 0 file"}"#,
+            "\u{feff}{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"shred file\"}}",
+        ] {
+            assert!(
+                process(input).expect("valid hook JSON").is_some(),
+                "expected denial for payload: {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_and_commandless_inputs_are_handled() {
+        assert!(process("not json").is_err());
+        for input in [
+            "{}",
+            r#"{"tool_name":"Bash","tool_input":{}}"#,
+            r#"{"tool_name":"Read","tool_input":{"command":"rm -rf src"}}"#,
+        ] {
+            assert_eq!(process(input).expect("valid hook JSON"), None);
+        }
+    }
 }

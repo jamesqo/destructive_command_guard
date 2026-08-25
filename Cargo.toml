@@ -6,7 +6,6 @@ rust-version = "1.95"
 description = "A small hook that blocks destructive shell commands"
 license-file = "LICENSE"
 repository = "https://github.com/jamesqo/destructive_command_guard"
-autotests = false
 autobenches = false
 build = false
 exclude = [".beads/", ".codex/", ".config/", ".github/", "AGENTS.md"]

@@ -497,9 +497,13 @@ mod tests {
     fn blocks_retained_destructive_commands() {
         for command in [
             "git reset --hard HEAD~1",
+            "git reset --merge HEAD~1",
             "git -C repo clean -fdx",
+            "git clean --force -d",
             "git checkout -- .",
+            "git checkout -f main",
             "git restore .",
+            "git restore --staged --worktree file",
             "git branch -D work",
             "git branch --delete --force work",
             "git branch -df work",
@@ -507,7 +511,11 @@ mod tests {
             "git push --force origin main",
             "git push --force-with-lease=main origin main",
             "git stash clear",
+            "git stash drop stash@{0}",
+            "git reflog expire --expire=now --all",
+            "git gc --prune=now",
             "rm -rf ./src",
+            "/bin/rm --recursive src",
             "sudo rm -R important",
             "nice rm -rf /",
             "sudo -u root rm -rf /",
@@ -524,10 +532,16 @@ mod tests {
             "cmd.exe /c 'rd /s src'",
             "xargs -a paths rm -rf",
             "find . -name '*.tmp' -delete",
+            "shred secrets.txt",
+            "mkfs.ext4 /dev/sda1",
             "truncate -s 0 important.txt",
+            "truncate -s0 important.txt",
             "truncate --size=-1 important.txt",
             "dd if=/dev/zero of=/dev/sda",
             "Remove-Item -Recurse -Force src",
+            "del /s build",
+            "echo ready && git reset --hard",
+            "echo ready\nrm -rf src",
         ] {
             denied(command);
         }
@@ -537,9 +551,18 @@ mod tests {
     fn allows_ordinary_and_quoted_mentions() {
         for command in [
             "git status",
+            "git reset --soft HEAD~1",
             "git clean -ndx",
+            "git clean --force --dry-run",
+            "git checkout -b feature",
             "git restore --staged file",
             "git restore -S file",
+            "git branch -d merged-feature",
+            "git push origin main",
+            "git stash list",
+            "git stash pop",
+            "git reflog show",
+            "git gc",
             "rm file.txt",
             "rm -f build.log",
             "echo 'never run rm -rf /'",
@@ -548,6 +571,8 @@ mod tests {
             "truncate -s 10 file",
             "shred --help",
             "dd if=image.iso status=progress",
+            "echo ok # rm -rf src",
+            "printf '%s' \"git push --force origin main\"",
         ] {
             allowed(command);
         }

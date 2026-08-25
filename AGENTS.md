@@ -8,8 +8,10 @@ guard, not a general policy platform.
 - Production code stays concrete: evaluator, hook adapter, CLI.
 - Add a rule only for a destructive operation with a clear false-positive
   boundary.
+- `.dcg.toml` may only add literal project denials. Do not add allow rules,
+  inheritance, profiles, plugins, remote includes, or bypass credentials.
 - Do not add packs, registries, databases, history, analytics, TUI, MCP,
-  self-update, network access, or configuration frameworks.
+  self-update, network access, or a general configuration framework.
 - Backward compatibility with removed product surfaces is not required.
 
 ## Rust

@@ -7,26 +7,68 @@
 
 pub mod hook;
 
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
+
+const MAX_PROJECT_CONFIG_BYTES: u64 = 64 * 1024;
+const MAX_PROJECT_RULES: usize = 64;
+
 /// The result of evaluating one shell command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Decision {
     /// No retained rule matched.
     Allow,
     /// A destructive operation matched.
     Deny {
         /// Stable identifier for the matching rule.
-        rule_id: &'static str,
+        rule_id: String,
         /// Short explanation suitable for an agent.
-        reason: &'static str,
+        reason: String,
     },
 }
 
 impl Decision {
     /// Whether execution should be blocked.
     #[must_use]
-    pub const fn is_denied(self) -> bool {
+    pub const fn is_denied(&self) -> bool {
         matches!(self, Self::Deny { .. })
     }
+}
+
+#[derive(Debug)]
+struct ProjectRules {
+    deny: Vec<ProjectRule>,
+}
+
+#[derive(Debug)]
+struct ProjectRule {
+    id: String,
+    reason: String,
+    matcher: ProjectMatcher,
+}
+
+#[derive(Debug)]
+enum ProjectMatcher {
+    Exact(String),
+    Prefix(String),
+    Contains(String),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectFile {
+    #[serde(default)]
+    deny: Vec<ProjectRuleFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectRuleFile {
+    id: String,
+    reason: String,
+    exact: Option<String>,
+    prefix: Option<String>,
+    contains: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +94,172 @@ pub fn evaluate(command: &str) -> Decision {
         }
     }
     Decision::Allow
+}
+
+/// Evaluate a command with the nearest repository-local `.dcg.toml` policy.
+///
+/// Project policy can only add denials; it cannot weaken built-in rules. An
+/// invalid or unreadable policy fails closed with `project-config.invalid`.
+///
+/// # Examples
+///
+/// ```
+/// use destructive_command_guard::evaluate_in;
+///
+/// let decision = evaluate_in("git status", std::path::Path::new("."));
+/// assert!(!decision.is_denied());
+/// ```
+#[must_use]
+pub fn evaluate_in(command: &str, cwd: &Path) -> Decision {
+    let builtin = evaluate(command);
+    if builtin.is_denied() {
+        return builtin;
+    }
+
+    match load_project_rules(cwd) {
+        Ok(Some(rules)) => evaluate_with_rules(command, &rules),
+        Ok(None) => Decision::Allow,
+        Err(reason) => Decision::Deny {
+            rule_id: "project-config.invalid".to_owned(),
+            reason,
+        },
+    }
+}
+
+fn load_project_rules(cwd: &Path) -> Result<Option<ProjectRules>, String> {
+    let Some(path) = find_project_config(cwd) else {
+        return Ok(None);
+    };
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    if metadata.len() > MAX_PROJECT_CONFIG_BYTES {
+        return Err(format!(
+            "{} exceeds the 64 KiB project-policy limit",
+            path.display()
+        ));
+    }
+    let input = std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if input.len() as u64 > MAX_PROJECT_CONFIG_BYTES {
+        return Err(format!(
+            "{} exceeds the 64 KiB project-policy limit",
+            path.display()
+        ));
+    }
+    parse_project_rules(&input).map(Some)
+}
+
+fn find_project_config(cwd: &Path) -> Option<PathBuf> {
+    for directory in cwd.ancestors() {
+        let candidate = directory.join(".dcg.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if directory.join(".git").exists() {
+            break;
+        }
+    }
+    None
+}
+
+fn parse_project_rules(input: &str) -> Result<ProjectRules, String> {
+    let file: ProjectFile =
+        toml::from_str(input).map_err(|error| format!("invalid .dcg.toml: {error}"))?;
+    if file.deny.len() > MAX_PROJECT_RULES {
+        return Err(format!(
+            ".dcg.toml contains more than {MAX_PROJECT_RULES} deny rules"
+        ));
+    }
+
+    let mut rules = Vec::with_capacity(file.deny.len());
+    for source in file.deny {
+        validate_rule_id(&source.id)?;
+        if source.reason.trim().is_empty() || source.reason.len() > 512 {
+            return Err(format!(
+                "project rule {:?} needs a reason of 1 to 512 bytes",
+                source.id
+            ));
+        }
+        if rules.iter().any(|rule: &ProjectRule| rule.id == source.id) {
+            return Err(format!("duplicate project rule id {:?}", source.id));
+        }
+
+        let matchers = [
+            source.exact.map(ProjectMatcher::Exact),
+            source.prefix.map(ProjectMatcher::Prefix),
+            source.contains.map(ProjectMatcher::Contains),
+        ];
+        let mut matchers = matchers.into_iter().flatten();
+        let Some(matcher) = matchers.next() else {
+            return Err(format!(
+                "project rule {:?} needs exactly one of exact, prefix, or contains",
+                source.id
+            ));
+        };
+        if matchers.next().is_some() {
+            return Err(format!(
+                "project rule {:?} has more than one matcher",
+                source.id
+            ));
+        }
+        let pattern = match &matcher {
+            ProjectMatcher::Exact(pattern)
+            | ProjectMatcher::Prefix(pattern)
+            | ProjectMatcher::Contains(pattern) => pattern,
+        };
+        if pattern.trim().is_empty() || pattern.len() > 1024 {
+            return Err(format!(
+                "project rule {:?} needs a matcher of 1 to 1024 bytes",
+                source.id
+            ));
+        }
+        rules.push(ProjectRule {
+            id: source.id,
+            reason: source.reason,
+            matcher,
+        });
+    }
+    Ok(ProjectRules { deny: rules })
+}
+
+fn validate_rule_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+        })
+    {
+        return Err(format!(
+            "invalid project rule id {id:?}; use 1 to 64 lowercase ASCII letters, digits, '.', '-', or '_'"
+        ));
+    }
+    Ok(())
+}
+
+fn evaluate_with_rules(command: &str, rules: &ProjectRules) -> Decision {
+    let command = command.trim();
+    for rule in &rules.deny {
+        let matched = match &rule.matcher {
+            ProjectMatcher::Exact(pattern) => command == pattern,
+            ProjectMatcher::Prefix(pattern) => command
+                .strip_prefix(pattern)
+                .is_some_and(|rest| rest.is_empty() || starts_shell_boundary(rest)),
+            ProjectMatcher::Contains(pattern) => command.contains(pattern),
+        };
+        if matched {
+            return Decision::Deny {
+                rule_id: format!("project.{}", rule.id),
+                reason: rule.reason.clone(),
+            };
+        }
+    }
+    Decision::Allow
+}
+
+fn starts_shell_boundary(rest: &str) -> bool {
+    rest.chars().next().is_some_and(|character| {
+        character.is_whitespace() || matches!(character, ';' | '|' | '&' | '<' | '>' | '(' | ')')
+    })
 }
 
 fn evaluate_words(words: &[&str]) -> Option<Decision> {
@@ -418,8 +626,11 @@ fn program_name(program: &str) -> String {
         .map_or_else(|| name.clone(), std::borrow::ToOwned::to_owned)
 }
 
-const fn deny(rule_id: &'static str, reason: &'static str) -> Decision {
-    Decision::Deny { rule_id, reason }
+fn deny(rule_id: &str, reason: &str) -> Decision {
+    Decision::Deny {
+        rule_id: rule_id.to_owned(),
+        reason: reason.to_owned(),
+    }
 }
 
 fn lex(input: &str) -> Vec<Token> {
@@ -479,7 +690,7 @@ fn push_word(tokens: &mut Vec<Token>, word: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, evaluate};
+    use super::{Decision, evaluate, evaluate_with_rules, parse_project_rules};
 
     fn denied(command: &str) {
         assert!(evaluate(command).is_denied(), "expected denial: {command}");
@@ -575,6 +786,58 @@ mod tests {
             "printf '%s' \"git push --force origin main\"",
         ] {
             allowed(command);
+        }
+    }
+
+    #[test]
+    fn project_rules_support_one_explicit_match_shape() {
+        let rules = parse_project_rules(
+            r#"
+                [[deny]]
+                id = "no-prod-deploy"
+                prefix = "deploy production"
+                reason = "production deploys require the release workflow"
+
+                [[deny]]
+                id = "no-reset-script"
+                exact = "./scripts/reset-state"
+                reason = "state reset is intentionally manual"
+
+                [[deny]]
+                id = "protect-account"
+                contains = "--account production"
+                reason = "production account operations require review"
+            "#,
+        )
+        .expect("valid project rules");
+
+        for command in [
+            "deploy production --sha abc123",
+            "./scripts/reset-state",
+            "tool sync --account production --dry-run",
+        ] {
+            let decision = evaluate_with_rules(command, &rules);
+            assert!(decision.is_denied(), "expected project denial: {command}");
+        }
+        assert_eq!(
+            evaluate_with_rules("deploy production-like", &rules),
+            Decision::Allow
+        );
+    }
+
+    #[test]
+    fn project_rules_reject_ambiguous_or_invalid_policy() {
+        for policy in [
+            "[[deny]]\nid = \"x\"\nreason = \"missing matcher\"",
+            "[[deny]]\nid = \"x\"\nexact = \"a\"\nprefix = \"a\"\nreason = \"two matchers\"",
+            "[[deny]]\nid = \"Bad ID\"\nexact = \"a\"\nreason = \"invalid id\"",
+            "[[deny]]\nid = \"x\"\nexact = \"a\"\nreason = \"first\"\n[[deny]]\nid = \"x\"\nexact = \"b\"\nreason = \"duplicate\"",
+            "unknown = true",
+        ] {
+            assert!(
+                parse_project_rules(policy).is_err(),
+                "expected invalid project policy: {policy}"
+            );
         }
     }
 }

@@ -1,7 +1,12 @@
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
 fn run(args: &[&str], input: Option<&[u8]>) -> Output {
+    run_in(args, input, None)
+}
+
+fn run_in(args: &[&str], input: Option<&[u8]>, cwd: Option<&Path>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dcg"));
     command
         .args(args)
@@ -12,6 +17,9 @@ fn run(args: &[&str], input: Option<&[u8]>) -> Output {
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
     let mut child = command.spawn().expect("dcg test binary should start");
     if let Some(bytes) = input {
         child
@@ -22,6 +30,16 @@ fn run(args: &[&str], input: Option<&[u8]>) -> Output {
             .expect("test input should be writable");
     }
     child.wait_with_output().expect("dcg should exit")
+}
+
+fn project_directory() -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("test clock should be after Unix epoch")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("dcg-project-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(path.join(".git")).expect("test project should be created");
+    path
 }
 
 #[test]
@@ -102,4 +120,54 @@ fn help_and_version_are_available() {
         assert!(!output.stdout.is_empty());
         assert!(output.stderr.is_empty());
     }
+}
+
+#[test]
+fn project_policy_adds_denials_to_cli_and_hook() {
+    let project = project_directory();
+    std::fs::write(
+        project.join(".dcg.toml"),
+        r#"
+            [[deny]]
+            id = "no-prod-deploy"
+            prefix = "deploy production"
+            reason = "production deploys require the release workflow"
+        "#,
+    )
+    .expect("project policy should be writable");
+
+    let output = run_in(
+        &["test", "--json", "deploy production --sha abc123"],
+        None,
+        Some(&project),
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("project denial should be JSON");
+    assert_eq!(json["rule_id"], "project.no-prod-deploy");
+
+    let hook_input = serde_json::json!({
+        "tool_name": "Bash",
+        "cwd": project,
+        "tool_input": { "command": "deploy production --sha abc123" }
+    })
+    .to_string();
+    let output = run_in(&[], Some(hook_input.as_bytes()), Some(&project));
+    let json: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("hook project denial should be JSON");
+    assert!(
+        json["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("project.no-prod-deploy"))
+    );
+
+    std::fs::write(project.join(".dcg.toml"), "unknown = true")
+        .expect("invalid policy fixture should be writable");
+    let invalid = run_in(&["test", "--json", "git status"], None, Some(&project));
+    assert_eq!(invalid.status.code(), Some(1));
+    let json: serde_json::Value =
+        serde_json::from_slice(&invalid.stdout).expect("invalid-policy denial should be JSON");
+    assert_eq!(json["rule_id"], "project-config.invalid");
+
+    std::fs::remove_dir_all(project).expect("test project should be removable");
 }

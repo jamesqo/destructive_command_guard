@@ -1,7 +1,8 @@
 //! Claude Code and Codex hook protocol adapter.
 
-use crate::{Decision, evaluate};
+use crate::{Decision, evaluate_in};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 /// Maximum accepted hook payload size.
 pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
@@ -28,10 +29,16 @@ pub fn process(input: &str) -> Result<Option<String>, serde_json::Error> {
     let Some(command) = extract_command(&value) else {
         return Ok(None);
     };
-    let Decision::Deny { rule_id, reason } = evaluate(&command) else {
+    let cwd = value
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    let Decision::Deny { rule_id, reason } = evaluate_in(&command, &cwd) else {
         return Ok(None);
     };
-    Ok(Some(denial(rule_id, reason)))
+    Ok(Some(denial(rule_id.as_ref(), reason.as_ref())))
 }
 
 /// Construct the shared minimal Claude/Codex denial envelope.

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use destructive_command_guard::{Decision, evaluate, hook};
+use destructive_command_guard::{Decision, evaluate_in, hook};
 use serde::Serialize;
 use std::io::{self, Read};
 use std::process::ExitCode;
@@ -91,15 +91,17 @@ fn run_test(args: &[String]) -> Result<ExitCode, String> {
         positional.join(" ")
     };
 
-    let decision = evaluate(&command);
+    let cwd = std::env::current_dir()
+        .map_err(|error| format!("cannot determine current directory: {error}"))?;
+    let decision = evaluate_in(&command, &cwd);
     if json {
         println!(
             "{}",
-            serde_json::to_string(&TestOutput::new(&command, decision))
+            serde_json::to_string(&TestOutput::new(&command, &decision))
                 .expect("serializing static test output cannot fail")
         );
     } else {
-        match decision {
+        match &decision {
             Decision::Allow => println!("ALLOW"),
             Decision::Deny { rule_id, reason } => {
                 println!("DENY [{rule_id}] {reason}");
@@ -127,13 +129,13 @@ struct TestOutput<'a> {
     command: &'a str,
     decision: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    rule_id: Option<&'static str>,
+    rule_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    reason: Option<&'static str>,
+    reason: Option<&'a str>,
 }
 
 impl<'a> TestOutput<'a> {
-    const fn new(command: &'a str, decision: Decision) -> Self {
+    fn new(command: &'a str, decision: &'a Decision) -> Self {
         match decision {
             Decision::Allow => Self {
                 command,
@@ -144,8 +146,8 @@ impl<'a> TestOutput<'a> {
             Decision::Deny { rule_id, reason } => Self {
                 command,
                 decision: "deny",
-                rule_id: Some(rule_id),
-                reason: Some(reason),
+                rule_id: Some(rule_id.as_ref()),
+                reason: Some(reason.as_ref()),
             },
         }
     }

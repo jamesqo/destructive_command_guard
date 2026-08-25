@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
@@ -27,7 +27,8 @@ jobs:
           targets: x86_64-unknown-linux-musl,aarch64-apple-darwin
 
       - name: Restore Cargo cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        id: cargo-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cargo/registry
@@ -93,6 +94,16 @@ jobs:
           file dist/darwin-arm64/dcg | tee /dev/stderr | grep -q 'arm64'
           sha256sum dist/linux-amd64/dcg dist/darwin-arm64/dcg
 
+      - name: Save Cargo cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: dcg-${{ runner.os }}-rust-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+
       - name: Deploy over Tailscale
         shell: bash
         run: |
@@ -106,16 +117,16 @@ jobs:
             ssh "$target" 'mkdir -p "$HOME/.local/bin"'
             scp "dist/${platform}/dcg" "${target}:${staged}"
 
-            # The generated staging path is passed as data, not interpolated
-            # into the remote script.
-            # shellcheck disable=SC2029
-            ssh "$target" 'set -eu
+            # Send the script over stdin and pass the generated staging path as
+            # an actual positional argument to the remote shell.
+            ssh "$target" sh -s -- "$staged" <<'REMOTE_SCRIPT'
+              set -eu
               staged=$1
               chmod 0755 "$HOME/$staged"
               "$HOME/$staged" --version
               "$HOME/$staged" test "git status" >/dev/null
               mv -f "$HOME/$staged" "$HOME/.local/bin/dcg"
-            ' sh "$staged"
+          REMOTE_SCRIPT
           }
 
           deploy james@100.97.52.20 linux-amd64

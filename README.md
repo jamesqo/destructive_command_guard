@@ -74,3 +74,16 @@ cargo nextest run       # or: cargo test
 ```
 
 The default branch is `main`; `master` mirrors it for legacy links.
+
+## Automatic deployment
+
+Every push to `main` runs `.github/workflows/deploy.yml`. GitHub Actions builds
+the static Linux binary, cross-compiles the Apple Silicon binary with
+`cargo-zigbuild`, and deploys `dcg` atomically to `~/.local/bin` on Xenia,
+`dev-macbook`, and `personal-macbook` over Tailscale. Destination machines do
+not need the repository or a Rust toolchain. Manual runs are also available
+through `workflow_dispatch`.
+
+The repository needs the same deployment secrets as Veritas:
+`TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `DEPLOY_SSH_PRIVATE_KEY`, and
+`DEPLOY_SSH_KNOWN_HOSTS`.

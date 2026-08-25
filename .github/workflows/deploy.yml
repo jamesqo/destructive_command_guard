@@ -1,0 +1,111 @@
+name: Deploy DCG
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dcg-main
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-musl
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+
+      - name: Build Linux binary
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends musl-tools
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          mkdir -p dist/linux-amd64 dist/darwin-arm64
+          cp target/x86_64-unknown-linux-musl/release/dcg dist/linux-amd64/dcg
+          file dist/linux-amd64/dcg | tee /dev/stderr | grep -q 'x86-64'
+          dist/linux-amd64/dcg --version
+
+      - name: Join tailnet
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:github-actions
+          ping: 100.97.52.20,100.102.58.41,100.90.2.48
+
+      - name: Configure deployment SSH key
+        shell: bash
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          install -m 600 /dev/null "$HOME/.ssh/id_ed25519"
+          install -m 600 /dev/null "$HOME/.ssh/known_hosts"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+
+      - name: Cross-compile Apple Silicon binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # cargo-zigbuild's official image includes Rust, Zig, and the macOS
+          # SDK needed to link a Darwin binary from the Linux runner. Pin both
+          # its release tag and multi-platform manifest digest.
+          docker run --rm \
+            --volume "$PWD:/io" \
+            --workdir /io \
+            ghcr.io/rust-cross/cargo-zigbuild:0.23.0@sha256:b8364c2c60cdcc9b95c402d17654bff517410926a35678bd89dd924b8158d6ae \
+            cargo zigbuild --locked --release --target aarch64-apple-darwin
+          cp target/aarch64-apple-darwin/release/dcg dist/darwin-arm64/dcg
+          file dist/darwin-arm64/dcg | tee /dev/stderr | grep -q 'arm64'
+          sha256sum dist/linux-amd64/dcg dist/darwin-arm64/dcg
+
+      - name: Deploy over Tailscale
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deploy() {
+            local target=$1
+            local platform=$2
+            local staged=".local/bin/.dcg-${GITHUB_SHA}"
+
+            ssh "$target" 'mkdir -p "$HOME/.local/bin"'
+            scp "dist/${platform}/dcg" "${target}:${staged}"
+
+            # The generated staging path is passed as data, not interpolated
+            # into the remote script.
+            # shellcheck disable=SC2029
+            ssh "$target" 'set -eu
+              staged=$1
+              chmod 0755 "$HOME/$staged"
+              "$HOME/$staged" --version
+              "$HOME/$staged" test "git status" >/dev/null
+              mv -f "$HOME/$staged" "$HOME/.local/bin/dcg"
+            ' sh "$staged"
+          }
+
+          deploy james@100.97.52.20 linux-amd64
+          deploy jko@100.102.58.41 darwin-arm64
+          deploy james@100.90.2.48 darwin-arm64

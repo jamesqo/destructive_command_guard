@@ -14,18 +14,13 @@ concurrency:
 
 jobs:
   deploy:
-    uses: jamesqo/gha-workflows/.github/workflows/rust-cli-deploy.yml@v1
+    uses: jamesqo/gha-workflows/.github/workflows/rust-cli-deploy.yml@v2
     with:
       binary: dcg
       rust-toolchain: stable
       cache-prefix: dcg
       linux-target: x86_64-unknown-linux-musl
       timeout-minutes: 10
-      test-command: >-
-        cargo fmt --check &&
-        cargo check --locked --all-targets &&
-        cargo clippy --locked --all-targets -- -D warnings &&
-        cargo test --locked
       deploy-targets: >-
         [{"ssh":"james@100.97.52.20","platform":"linux-amd64"},{"ssh":"jko@100.102.58.41","platform":"darwin-arm64"},{"ssh":"james@100.90.2.48","platform":"darwin-arm64"}]
     secrets:

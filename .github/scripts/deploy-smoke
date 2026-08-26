@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+binary=${1:?usage: deploy-smoke BINARY REVISION}
+: "${2:?usage: deploy-smoke BINARY REVISION}"
+
+"$binary" --version
+"$binary" test "git status" >/dev/null
